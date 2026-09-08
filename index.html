@@ -13,6 +13,7 @@
      ============================================================ -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 
@@ -267,6 +268,24 @@
           <span id="aiStatusText">Cargando modelos de IA…</span>
         </div>
         <div class="ai-result" id="aiResult" style="display:none;"></div>
+
+        <!-- Configuración opcional: motor de detección externo (Google Cloud Vision) -->
+        <div class="preproc-panel" style="margin-top:12px;">
+          <h3>Motor de detección <span style="text-transform:none; font-weight:400;">(avanzado, opcional)</span></h3>
+          <div class="preproc-toggles">
+            <span class="toggle-chip active" id="engineLocal">🧠 Local (COCO-SSD + MobileNet)</span>
+            <span class="toggle-chip" id="engineCloud">☁️ Google Cloud Vision (con API key)</span>
+          </div>
+          <div id="cloudKeyRow" style="display:none;">
+            <label>API Key de Google Cloud Vision</label>
+            <input type="text" id="cloudApiKey" placeholder="Pega aquí tu API key (se guarda solo en este navegador)">
+            <div class="crop-hint" style="margin-top:6px;">
+              ⚠️ La key queda guardada en <b>localStorage de este navegador</b> y viaja directo desde el navegador a Google —
+              no hay backend que la oculte. Úsala solo en equipos de confianza, con una key restringida por dominio/IP
+              y con cuota limitada en la consola de Google Cloud.
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Panel de formulario -->
@@ -746,46 +765,94 @@
   })();
 
   /* ------------------------------------------------------------------ */
-  /* 4. MÓDULO AI — clasificación de imagen + OCR                        */
+  /* 4. MÓDULO AI — detección de objetos (COCO-SSD) + clasificación      */
+  /*    (MobileNet) + OCR (Tesseract) + Google Cloud Vision opcional     */
+  /*                                                                      */
+  /*    Estrategia (de mayor a menor prioridad):                        */
+  /*    a) Si el motor "Cloud" está activo y hay API key -> Google       */
+  /*       Cloud Vision (label + object localization). Más preciso.     */
+  /*    b) COCO-SSD: detección de objetos con caja delimitadora — mucho  */
+  /*       más robusto que clasificar la imagen completa, porque         */
+  /*       localiza el equipo aunque haya fondo/otros objetos.          */
+  /*    c) MobileNet: respaldo por si COCO-SSD no encuentra nada         */
+  /*       (clasifica la imagen completa).                               */
+  /*    d) OCR: siempre corre en paralelo y puede sobreescribir la       */
+  /*       categoría cuando el texto es muy específico (ej. "LaserJet",  */
+  /*       "PowerEdge") — el texto es más confiable que la visión para   */
+  /*       distinguir impresora/servidor, que los modelos genéricos no   */
+  /*       reconocen bien.                                               */
   /* ------------------------------------------------------------------ */
   const AI = (() => {
-    let mobilenetModel = null;
-    let modelLoading = null;
+    let mobilenetModel = null, mobilenetLoading = null;
+    let cocoModel = null, cocoLoading = null;
+    let engine = 'local'; // 'local' | 'cloud'
 
     const els = {};
     function init() {
       els.status = document.getElementById('aiStatus');
       els.statusText = document.getElementById('aiStatusText');
       els.result = document.getElementById('aiResult');
+      els.engineLocal = document.getElementById('engineLocal');
+      els.engineCloud = document.getElementById('engineCloud');
+      els.cloudKeyRow = document.getElementById('cloudKeyRow');
+      els.cloudApiKey = document.getElementById('cloudApiKey');
+
+      // Restaura la key guardada localmente (si el usuario ya la configuró antes)
+      els.cloudApiKey.value = localStorage.getItem('scanwork_cloud_api_key') || '';
+      els.cloudApiKey.addEventListener('change', () => {
+        localStorage.setItem('scanwork_cloud_api_key', els.cloudApiKey.value.trim());
+      });
+      els.engineLocal.addEventListener('click', () => setEngine('local'));
+      els.engineCloud.addEventListener('click', () => setEngine('cloud'));
     }
 
-    // Mapeo de clases de ImageNet/MobileNet -> categorías de equipo del negocio.
-    // MobileNet no tiene clases exactas de "servidor" o "impresora de oficina",
-    // por eso se usa coincidencia de palabras clave sobre las top-N predicciones.
+    function setEngine(mode) {
+      engine = mode;
+      els.engineLocal.classList.toggle('active', mode === 'local');
+      els.engineCloud.classList.toggle('active', mode === 'cloud');
+      els.cloudKeyRow.style.display = mode === 'cloud' ? 'block' : 'none';
+    }
+
+    // COCO-SSD trae 80 clases de propósito general; estas son las relevantes
+    // para equipos de cómputo, mapeadas a las categorías del negocio.
+    const COCO_MAP = {
+      laptop: 'laptop',
+      tv: 'monitor',       // COCO no distingue TV de monitor, se corrige luego con OCR/tamaño
+      keyboard: 'desktop',  // indicio indirecto de un puesto de escritorio (se usa como pista débil)
+      mouse: 'desktop'
+    };
+
+    // Mapeo de clases de ImageNet/MobileNet -> categorías (respaldo si COCO-SSD no detecta nada)
     const KEYWORD_MAP = {
       laptop: ['laptop', 'notebook'],
       desktop: ['desktop computer', 'computer', 'mainframe', 'tower'],
       monitor: ['monitor', 'screen', 'television', 'crt screen', 'display'],
       impresora: ['printer', 'photocopier', 'scanner', 'fax'],
-      servidor: ['mainframe', 'rack', 'space bar'], // heurística débil: se refuerza con OCR (ver abajo)
+      servidor: ['mainframe', 'rack'],
       otro: ['modem', 'router', 'keyboard', 'mouse', 'hard disc']
     };
 
-    // Palabras que si aparecen en el texto OCR refuerzan fuertemente la categoría "servidor"
-    // o "impresora", compensando la falta de clases específicas en MobileNet.
+    // Palabras del OCR que refuerzan/corrigen la categoría — más confiables
+    // que la visión para "servidor" e "impresora", que los modelos genéricos no cubren bien.
     const OCR_CATEGORY_HINTS = {
       servidor: ['server', 'servidor', 'poweredge', 'proliant', 'rack unit', 'rackmount'],
       impresora: ['printer', 'impresora', 'laserjet', 'inkjet', 'toner', 'cartridge'],
-      monitor: ['monitor', 'display', 'led', 'lcd', 'hz', 'full hd', 'ips'],
+      monitor: ['monitor', 'display', 'led', 'lcd', 'full hd', 'ips'],
       laptop: ['notebook', 'laptop', 'thinkpad', 'ideapad', 'inspiron', 'pavilion', 'macbook'],
       desktop: ['desktop', 'tower', 'optiplex', 'elitedesk']
     };
 
-    async function ensureModel() {
+    async function ensureMobilenet() {
       if (mobilenetModel) return mobilenetModel;
-      if (modelLoading) return modelLoading;
-      modelLoading = mobilenet.load({ version: 2, alpha: 1.0 }).then(m => { mobilenetModel = m; return m; });
-      return modelLoading;
+      if (mobilenetLoading) return mobilenetLoading;
+      mobilenetLoading = mobilenet.load({ version: 2, alpha: 1.0 }).then(m => { mobilenetModel = m; return m; });
+      return mobilenetLoading;
+    }
+    async function ensureCoco() {
+      if (cocoModel) return cocoModel;
+      if (cocoLoading) return cocoLoading;
+      cocoLoading = cocoSsd.load({ base: 'lite_mobilenet_v2' }).then(m => { cocoModel = m; return m; });
+      return cocoLoading;
     }
 
     function setStatus(visible, text) {
@@ -793,22 +860,81 @@
       if (text) els.statusText.textContent = text;
     }
 
-    function classifyFromMap(predictions) {
-      let best = { tipo: null, score: 0, label: null };
-      for (const p of predictions) {
-        const className = p.className.toLowerCase();
-        for (const [tipo, keywords] of Object.entries(KEYWORD_MAP)) {
-          if (keywords.some(k => className.includes(k)) && p.probability > best.score) {
-            best = { tipo, score: p.probability, label: p.className };
+    // --- Detección local: COCO-SSD primero (localiza objetos), MobileNet como respaldo ---
+    async function detectLocal(imgEl) {
+      let best = { tipo: null, score: 0, label: null, method: null, box: null };
+
+      try {
+        const coco = await ensureCoco();
+        setStatus(true, 'Buscando el equipo dentro de la foto (detección de objetos)…');
+        const detections = await coco.detect(imgEl, 10, 0.35); // hasta 10 objetos, min score 0.35
+        for (const d of detections) {
+          const tipo = COCO_MAP[d.class];
+          if (tipo && d.score > best.score) {
+            best = { tipo, score: d.score, label: d.class, method: 'coco-ssd', box: d.bbox };
           }
+        }
+      } catch (err) {
+        console.error('Error en COCO-SSD:', err);
+      }
+
+      // Si COCO-SSD no encontró nada relevante, cae a MobileNet (clasificación de imagen completa)
+      if (!best.tipo) {
+        try {
+          const model = await ensureMobilenet();
+          setStatus(true, 'Analizando tipo de equipo (clasificación general)…');
+          const predictions = await model.classify(imgEl, 8); // top-8 en vez de top-3 por defecto: más margen
+          for (const p of predictions) {
+            const className = p.className.toLowerCase();
+            for (const [tipo, keywords] of Object.entries(KEYWORD_MAP)) {
+              if (keywords.some(k => className.includes(k)) && p.probability > best.score) {
+                best = { tipo, score: p.probability, label: p.className, method: 'mobilenet' };
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Error en MobileNet:', err);
+          UIUtils.toast('No se pudo cargar el modelo de visión local (revisa tu conexión).', 'err');
         }
       }
       return best;
     }
 
+    // --- Detección vía Google Cloud Vision (opcional, requiere API key del usuario) ---
+    async function detectCloud(dataUrl, apiKey) {
+      const base64 = dataUrl.split(',')[1];
+      const body = {
+        requests: [{
+          image: { content: base64 },
+          features: [{ type: 'LABEL_DETECTION', maxResults: 15 }, { type: 'OBJECT_LOCALIZATION', maxResults: 10 }]
+        }]
+      };
+      const resp = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      if (!resp.ok) throw new Error(`Google Cloud Vision respondió ${resp.status}`);
+      const json = await resp.json();
+      const result = json.responses && json.responses[0];
+      if (!result) throw new Error('Respuesta vacía de Google Cloud Vision.');
+
+      const texts = [
+        ...(result.labelAnnotations || []).map(l => ({ desc: l.description.toLowerCase(), score: l.score })),
+        ...(result.localizedObjectAnnotations || []).map(l => ({ desc: l.name.toLowerCase(), score: l.score }))
+      ];
+      let best = { tipo: null, score: 0, label: null, method: 'cloud-vision' };
+      for (const t of texts) {
+        for (const [tipo, keywords] of Object.entries(KEYWORD_MAP)) {
+          if (keywords.some(k => t.desc.includes(k)) && t.score > best.score) {
+            best = { tipo, score: t.score, label: t.desc, method: 'cloud-vision' };
+          }
+        }
+        if (['printer', 'photocopier'].some(k => t.desc.includes(k)) && t.score > best.score) best = { tipo: 'impresora', score: t.score, label: t.desc, method: 'cloud-vision' };
+        if (['server', 'server computer'].some(k => t.desc.includes(k)) && t.score > best.score) best = { tipo: 'servidor', score: t.score, label: t.desc, method: 'cloud-vision' };
+      }
+      return best;
+    }
+
     function refineWithOCR(visionResult, ocrTextLower) {
-      // Si el OCR contiene términos muy específicos de una categoría, se prioriza
-      // sobre la predicción visual (más confiable para "servidor" e "impresora").
       for (const [tipo, hints] of Object.entries(OCR_CATEGORY_HINTS)) {
         if (hints.some(h => ocrTextLower.includes(h))) {
           return { tipo, score: Math.max(visionResult.score || 0, 0.65), label: `texto OCR: "${hints.find(h => ocrTextLower.includes(h))}"`, source: 'ocr' };
@@ -820,22 +946,37 @@
     async function analyze(dataUrl) {
       if (!dataUrl) { UIUtils.toast('No hay imagen para analizar.', 'err'); return; }
       resetResults();
-      setStatus(true, 'Cargando modelo de visión (primera vez puede tardar)…');
+      setStatus(true, 'Preparando análisis…');
 
       let visionResult = { tipo: null, score: 0, label: null };
       let ocrResult = null;
 
+      const imgEl = new Image();
       try {
-        const model = await ensureModel();
-        setStatus(true, 'Analizando tipo de equipo…');
-        const imgEl = new Image();
         await new Promise((resolve, reject) => { imgEl.onload = resolve; imgEl.onerror = reject; imgEl.src = dataUrl; });
-        const predictions = await model.classify(imgEl);
-        visionResult = classifyFromMap(predictions);
-        visionResult.raw = predictions;
-      } catch (err) {
-        console.error('Error en clasificación de imagen:', err);
-        UIUtils.toast('No se pudo cargar el modelo de visión (revisa tu conexión).', 'err');
+      } catch {
+        UIUtils.toast('No se pudo cargar la imagen para analizarla.', 'err');
+        setStatus(false);
+        return;
+      }
+
+      if (engine === 'cloud') {
+        const apiKey = (els.cloudApiKey.value || '').trim();
+        if (!apiKey) {
+          UIUtils.toast('Ingresa tu API key de Google Cloud Vision o vuelve al motor local.', 'err');
+          setStatus(false);
+          return;
+        }
+        try {
+          setStatus(true, 'Consultando Google Cloud Vision…');
+          visionResult = await detectCloud(dataUrl, apiKey);
+        } catch (err) {
+          console.error('Error en Cloud Vision:', err);
+          UIUtils.toast('Falló Google Cloud Vision (' + err.message + '). Usando motor local como respaldo.', 'err');
+          visionResult = await detectLocal(imgEl);
+        }
+      } else {
+        visionResult = await detectLocal(imgEl);
       }
 
       try {
@@ -846,7 +987,6 @@
         console.error('Error en OCR:', err);
       }
 
-      // Combina ambas señales: el texto OCR puede corregir/reforzar la categoría visual
       let finalVision = visionResult;
       if (ocrResult && ocrResult.text) {
         finalVision = refineWithOCR(visionResult, ocrResult.text.toLowerCase());
@@ -869,11 +1009,13 @@
       if (visionResult && visionResult.tipo) {
         if (!f.tipo.value) f.tipo.value = visionResult.tipo;
         const pct = Math.round((visionResult.score || 0) * 100);
+        const metodoTxt = { 'coco-ssd': 'detección de objetos', 'mobilenet': 'clasificación general', 'cloud-vision': 'Google Cloud Vision' }[visionResult.method] || '';
         html += `<div><b>Tipo detectado:</b> <span class="chip">${visionResult.tipo}</span> ` +
-                `${visionResult.source === 'ocr' ? '(confirmado por texto OCR)' : `(confianza visual ${pct}%, etiqueta IA: "${visionResult.label}")`}</div>` +
+                `${visionResult.source === 'ocr' ? '(confirmado por texto OCR)' : `(${metodoTxt}, confianza ${pct}%, etiqueta: "${visionResult.label}")`}</div>` +
                 `<div class="conf-bar"><div style="width:${pct}%"></div></div>`;
       } else {
-        html += `<div><b>Tipo detectado:</b> no se identificó con certeza — selecciónalo manualmente.</div>`;
+        html += `<div><b>Tipo detectado:</b> no se identificó con certeza — selecciónalo manualmente. ` +
+                `Prueba acercar más la cámara al equipo o mejorar la iluminación.</div>`;
       }
 
       if (ocrResult && ocrResult.text && ocrResult.text.trim()) {
