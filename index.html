@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
-<title>ScanWork · Recepción inteligente de equipos</title>
+<title>ScanWork Pro · Recepción inteligente de equipos con preprocesamiento</title>
 
 <!-- ============================================================
-     LIBRERÍAS EXTERNAS (todas vía CDN, sin backend)
-     - TensorFlow.js + MobileNet: clasificación de imagen (tipo de equipo)
-     - Tesseract.js: OCR para extraer texto visible (marca/modelo/serie)
-     - jsPDF: generación de ticket PDF en cliente
+     LIBRERÍAS EXTERNAS (CDN, sin backend)
+     - TensorFlow.js + MobileNet: clasificación de imagen
+     - Tesseract.js: OCR
+     - jsPDF: ticket PDF en cliente
      ============================================================ -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
@@ -22,7 +22,6 @@
     --border:#2b3654; --text:#e7ecf6; --muted:#8b96b3; --accent:#4f7cff;
     --accent2:#38d6c0; --warn:#f5a623; --danger:#f0555f; --ok:#3ecf8e;
     --radius:14px; --shadow:0 8px 24px rgba(0,0,0,.35);
-    font-size:16px;
   }
   *{box-sizing:border-box;}
   body{
@@ -33,13 +32,13 @@
   header.app-header{
     display:flex; align-items:center; justify-content:space-between;
     padding:18px 24px; background:linear-gradient(120deg,#151c2e,#0e1424);
-    border-bottom:1px solid var(--border); position:sticky; top:0; z-index:20;
+    border-bottom:1px solid var(--border); position:sticky; top:0; z-index:20; flex-wrap:wrap; gap:10px;
   }
   .brand{display:flex; align-items:center; gap:12px;}
   .brand .logo{
     width:40px; height:40px; border-radius:10px;
     background:linear-gradient(135deg,var(--accent),var(--accent2));
-    display:flex; align-items:center; justify-content:center; font-weight:800; font-size:18px;
+    display:flex; align-items:center; justify-content:center; font-weight:800; font-size:16px;
   }
   .brand h1{font-size:19px; margin:0; letter-spacing:.5px;}
   .brand span{font-size:11px; color:var(--muted); display:block; margin-top:2px;}
@@ -52,7 +51,7 @@
   nav.tabs button.active{background:var(--card2); color:var(--text); border-color:var(--border);}
   nav.tabs button:hover{color:var(--text);}
 
-  main{max-width:1100px; margin:0 auto; padding:24px 20px;}
+  main{max-width:1150px; margin:0 auto; padding:24px 20px;}
   section{display:none;}
   section.active{display:block; animation:fade .25s ease;}
   @keyframes fade{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;}}
@@ -66,17 +65,17 @@
     font-size:11px; background:var(--card2); color:var(--accent2); padding:2px 8px;
     border-radius:20px; border:1px solid var(--border); font-weight:600;
   }
-  .grid2{display:grid; grid-template-columns:1.1fr 1fr; gap:18px;}
-  @media(max-width:820px){.grid2{grid-template-columns:1fr;}}
+  .grid2{display:grid; grid-template-columns:1.15fr 1fr; gap:18px;}
+  @media(max-width:860px){.grid2{grid-template-columns:1fr;}}
 
   /* --- Captura de imagen --- */
   .capture-box{
     border:2px dashed var(--border); border-radius:var(--radius); padding:16px;
-    text-align:center; background:var(--bg2); position:relative; min-height:260px;
+    text-align:center; background:var(--bg2); position:relative; min-height:240px;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
   }
   .capture-box video, .capture-box img, .capture-box canvas{
-    max-width:100%; max-height:320px; border-radius:10px; display:block;
+    max-width:100%; max-height:300px; border-radius:10px; display:block;
   }
   .capture-actions{display:flex; gap:10px; flex-wrap:wrap; justify-content:center;}
   .btn{
@@ -91,6 +90,24 @@
   .btn-danger{background:transparent; color:var(--danger); border:1px solid var(--danger);}
   .btn:disabled{opacity:.45; cursor:not-allowed;}
   input[type=file]{display:none;}
+
+  /* --- Panel de preprocesamiento --- */
+  .preproc-panel{
+    background:var(--bg2); border:1px solid var(--border); border-radius:12px;
+    padding:14px; margin-top:12px;
+  }
+  .preproc-panel h3{margin:0 0 10px; font-size:12.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;}
+  .slider-row{display:flex; align-items:center; gap:10px; margin-bottom:10px; font-size:12.5px;}
+  .slider-row label{flex:0 0 110px; color:var(--muted); font-weight:600;}
+  .slider-row input[type=range]{flex:1; accent-color:var(--accent);}
+  .slider-row .val{width:34px; text-align:right; color:var(--text); font-variant-numeric:tabular-nums;}
+  .preproc-toggles{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;}
+  .toggle-chip{
+    background:var(--card2); border:1px solid var(--border); color:var(--muted);
+    padding:6px 12px; border-radius:20px; font-size:12px; cursor:pointer; font-weight:600; user-select:none;
+  }
+  .toggle-chip.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .crop-hint{font-size:11px; color:var(--muted); margin-top:4px;}
 
   /* --- Formulario --- */
   label{font-size:12.5px; color:var(--muted); display:block; margin:10px 0 4px; font-weight:600;}
@@ -113,12 +130,14 @@
     border-radius:50%; animation:spin .8s linear infinite; flex:none;
   }
   @keyframes spin{to{transform:rotate(360deg);}}
-  .ai-result{font-size:12.5px; margin-top:8px; line-height:1.5;}
+  .ai-result{font-size:12.5px; margin-top:8px; line-height:1.6;}
   .ai-result b{color:var(--accent2);}
   .chip{
     display:inline-block; background:var(--card2); border:1px solid var(--border);
     padding:2px 9px; border-radius:20px; font-size:11.5px; margin:2px 4px 2px 0; color:var(--text);
   }
+  .conf-bar{height:5px; background:var(--bg2); border-radius:4px; overflow:hidden; margin-top:3px; border:1px solid var(--border);}
+  .conf-bar > div{height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2));}
 
   /* --- Historial --- */
   .toolbar{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; align-items:center;}
@@ -132,6 +151,8 @@
   .tag.laptop{background:#243a63; color:#8fb2ff;}
   .tag.desktop{background:#2a3d2e; color:#8fe0a3;}
   .tag.monitor{background:#3d3521; color:#f2d38a;}
+  .tag.impresora{background:#3d2a2a; color:#f0a3a3;}
+  .tag.servidor{background:#2a2f3d; color:#a3b8f0;}
   .tag.otro{background:#3a2a3d; color:#e0a3d8;}
   .row-actions{display:flex; gap:6px;}
   .icon-btn{
@@ -141,7 +162,6 @@
   .icon-btn:hover{color:var(--text); border-color:var(--accent);}
   .empty-state{text-align:center; color:var(--muted); padding:40px 10px; font-size:13.5px;}
 
-  /* --- Toast / notificaciones --- */
   #toast-container{position:fixed; bottom:20px; right:20px; display:flex; flex-direction:column; gap:8px; z-index:100;}
   .toast{
     background:var(--card2); border:1px solid var(--border); color:var(--text);
@@ -159,12 +179,12 @@
   .modal-overlay.show{display:flex;}
   .modal{
     background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
-    max-width:480px; width:100%; padding:22px; box-shadow:var(--shadow);
+    max-width:480px; width:100%; padding:22px; box-shadow:var(--shadow); max-height:90vh; overflow-y:auto;
   }
   .modal h3{margin-top:0;}
   .footer-note{text-align:center; color:var(--muted); font-size:11.5px; margin-top:30px;}
-  .stat-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px;}
-  @media(max-width:700px){.stat-grid{grid-template-columns:repeat(2,1fr);}}
+  .stat-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px;}
+  @media(max-width:800px){.stat-grid{grid-template-columns:repeat(2,1fr);}}
   .stat{background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px;}
   .stat .num{font-size:22px; font-weight:800;}
   .stat .lbl{font-size:11.5px; color:var(--muted);}
@@ -176,8 +196,8 @@
   <div class="brand">
     <div class="logo">SW</div>
     <div>
-      <h1>ScanWork</h1>
-      <span>Recepción inteligente de equipos · 100% en tu navegador</span>
+      <h1>ScanWork Pro</h1>
+      <span>OCR + visión por computadora + preprocesamiento · 100% en el navegador</span>
     </div>
   </div>
   <nav class="tabs">
@@ -192,12 +212,12 @@
   <section id="tab-captura" class="active">
     <div class="grid2">
 
-      <!-- Panel de captura de imagen -->
+      <!-- Panel de captura + preprocesamiento -->
       <div class="card">
         <h2>1. Foto del equipo <span class="badge">cámara o archivo</span></h2>
         <div class="capture-box" id="captureBox">
           <div id="captureEmpty">
-            <p style="color:var(--muted); font-size:13.5px;">Toma una foto del equipo o sube un archivo para iniciar el análisis con IA.</p>
+            <p style="color:var(--muted); font-size:13.5px;">Toma una foto o sube un archivo. Podrás recortar y ajustar la imagen antes de analizarla.</p>
           </div>
           <video id="videoPreview" autoplay playsinline style="display:none;"></video>
           <img id="photoPreview" style="display:none;">
@@ -209,6 +229,37 @@
           <label class="btn btn-secondary" for="fileInput">📁 Subir archivo</label>
           <input type="file" id="fileInput" accept="image/*">
           <button class="btn btn-danger" id="btnResetPhoto" style="display:none;">✖ Quitar foto</button>
+        </div>
+
+        <!-- Panel de preprocesamiento: contraste, binarización, recorte -->
+        <div class="preproc-panel" id="preprocPanel" style="display:none;">
+          <h3>Preprocesamiento de imagen</h3>
+          <div class="slider-row">
+            <label>Contraste</label>
+            <input type="range" id="rangeContrast" min="-50" max="100" value="0">
+            <span class="val" id="valContrast">0</span>
+          </div>
+          <div class="slider-row">
+            <label>Brillo</label>
+            <input type="range" id="rangeBrightness" min="-50" max="50" value="0">
+            <span class="val" id="valBrightness">0</span>
+          </div>
+          <div class="preproc-toggles">
+            <span class="toggle-chip" id="toggleGray">🩶 Escala de grises</span>
+            <span class="toggle-chip" id="toggleBin">⬛ Binarizar (para OCR)</span>
+            <span class="toggle-chip" id="toggleCrop">✂️ Recortar (arrastra sobre la foto)</span>
+          </div>
+          <div class="slider-row" id="rowThreshold" style="display:none;">
+            <label>Umbral binarización</label>
+            <input type="range" id="rangeThreshold" min="0" max="255" value="128">
+            <span class="val" id="valThreshold">128</span>
+          </div>
+          <div class="crop-hint" id="cropHint" style="display:none;">Arrastra sobre la imagen para seleccionar el área a recortar, luego pulsa "Aplicar recorte".</div>
+          <div class="capture-actions" style="margin-top:10px; justify-content:flex-start;">
+            <button class="btn btn-secondary" id="btnApplyCrop" style="display:none;">✅ Aplicar recorte</button>
+            <button class="btn btn-secondary" id="btnResetPreproc">↺ Restablecer ajustes</button>
+            <button class="btn btn-primary" id="btnAnalyze">🔍 Analizar con IA</button>
+          </div>
         </div>
 
         <div class="ai-status" id="aiStatus" style="display:none;">
@@ -233,6 +284,8 @@
               <option value="laptop">Laptop</option>
               <option value="desktop">Desktop / CPU</option>
               <option value="monitor">Monitor</option>
+              <option value="impresora">Impresora</option>
+              <option value="servidor">Servidor</option>
               <option value="otro">Otro</option>
             </select>
           </div>
@@ -274,6 +327,8 @@
           <option value="laptop">Laptop</option>
           <option value="desktop">Desktop</option>
           <option value="monitor">Monitor</option>
+          <option value="impresora">Impresora</option>
+          <option value="servidor">Servidor</option>
           <option value="otro">Otro</option>
         </select>
         <input type="text" id="filtroFecha" placeholder="Filtrar por fecha (YYYY-MM-DD)">
@@ -296,9 +351,8 @@
 
 </main>
 
-<div class="footer-note">ScanWork · Todos los datos y fotos se guardan localmente en tu navegador (IndexedDB). Nada se envía a servidores externos.</div>
+<div class="footer-note">ScanWork Pro · Todos los datos, fotos y análisis se procesan localmente en tu navegador (IndexedDB). Nada se envía a servidores externos.</div>
 
-<!-- Modal de detalle -->
 <div class="modal-overlay" id="modalDetalle">
   <div class="modal" id="modalContent"></div>
 </div>
@@ -307,20 +361,20 @@
 
 <script>
 /* =====================================================================
-   ScanWork — Recepción inteligente de equipos informáticos
-   App 100% frontend: captura de foto, IA de clasificación (MobileNet),
-   OCR (Tesseract.js), almacenamiento en IndexedDB y generación de
-   tickets PDF (jsPDF). Sin backend, persistente entre sesiones.
+   ScanWork Pro — Recepción inteligente de equipos informáticos
+   Pipeline: Captura -> Preprocesamiento -> OCR + Clasificación de imagen
+             -> IndexedDB -> Ticket PDF. 100% frontend, sin backend.
 
-   Estructura del código (módulos por responsabilidad):
-   1. DB        -> capa de acceso a IndexedDB
-   2. Camera    -> captura de foto (cámara / archivo)
-   3. AI        -> clasificación de imagen + OCR
-   4. Form      -> lectura/escritura del formulario de ingreso
-   5. History   -> render, búsqueda y filtrado del historial
-   6. PDF       -> generación del ticket
-   7. UI utils  -> toasts, tabs, modal
-   8. App       -> orquestación y listeners
+   Módulos:
+   1. DB          -> IndexedDB (persistencia)
+   2. Camera      -> captura de foto (cámara / archivo)
+   3. Preprocess  -> contraste, brillo, escala de grises, binarización, recorte
+   4. AI          -> clasificación de imagen (MobileNet) + OCR (Tesseract.js)
+   5. Form        -> lectura/escritura del formulario
+   6. History     -> render, búsqueda y filtrado del historial
+   7. PDF         -> ticket con jsPDF
+   8. UIUtils     -> toasts, tabs, modal
+   9. App         -> orquestación
    ===================================================================== */
 
 (() => {
@@ -330,16 +384,17 @@
   /* 0. CONFIGURACIÓN GENERAL                                           */
   /* ------------------------------------------------------------------ */
   const CONFIG = {
-    dbName: 'scanwork_db',
+    dbName: 'scanwork_pro_db',
     dbVersion: 1,
     storeName: 'ingresos',
-    thumbMaxSize: 480,   // px — tamaño máximo de la miniatura guardada
-    thumbQuality: 0.75,  // calidad JPEG de la miniatura
-    ocrMinConfidence: 40 // % mínimo de confianza para aceptar texto OCR como sugerencia
+    thumbMaxSize: 480,
+    thumbQuality: 0.75,
+    ocrLang: 'eng',
+    TIPOS: ['laptop', 'desktop', 'monitor', 'impresora', 'servidor', 'otro']
   };
 
   /* ------------------------------------------------------------------ */
-  /* 1. MÓDULO DB — capa de acceso a IndexedDB                          */
+  /* 1. MÓDULO DB                                                        */
   /* ------------------------------------------------------------------ */
   const DB = (() => {
     let dbInstance = null;
@@ -348,11 +403,10 @@
       return new Promise((resolve, reject) => {
         if (dbInstance) return resolve(dbInstance);
         if (!('indexedDB' in window)) {
-          reject(new Error('Este navegador no soporta IndexedDB. ScanWork no puede guardar datos.'));
+          reject(new Error('Este navegador no soporta IndexedDB. No se pueden guardar datos.'));
           return;
         }
         const req = indexedDB.open(CONFIG.dbName, CONFIG.dbVersion);
-
         req.onupgradeneeded = (e) => {
           const db = e.target.result;
           if (!db.objectStoreNames.contains(CONFIG.storeName)) {
@@ -371,24 +425,20 @@
       const db = await open();
       return new Promise((resolve, reject) => {
         const tx = db.transaction(CONFIG.storeName, 'readwrite');
-        const store = tx.objectStore(CONFIG.storeName);
-        const req = store.add(registro);
-        req.onsuccess = () => resolve(req.result); // devuelve el id generado
+        const req = tx.objectStore(CONFIG.storeName).add(registro);
+        req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });
     }
-
     async function getAll() {
       const db = await open();
       return new Promise((resolve, reject) => {
         const tx = db.transaction(CONFIG.storeName, 'readonly');
-        const store = tx.objectStore(CONFIG.storeName);
-        const req = store.getAll();
+        const req = tx.objectStore(CONFIG.storeName).getAll();
         req.onsuccess = () => resolve(req.result || []);
         req.onerror = () => reject(req.error);
       });
     }
-
     async function getById(id) {
       const db = await open();
       return new Promise((resolve, reject) => {
@@ -398,7 +448,6 @@
         req.onerror = () => reject(req.error);
       });
     }
-
     async function remove(id) {
       const db = await open();
       return new Promise((resolve, reject) => {
@@ -408,20 +457,17 @@
         req.onerror = () => reject(req.error);
       });
     }
-
     return { open, addRegistro, getAll, getById, remove };
   })();
 
   /* ------------------------------------------------------------------ */
-  /* 2. MÓDULO CAMERA — captura de foto (cámara o archivo)              */
+  /* 2. MÓDULO CAMERA                                                    */
   /* ------------------------------------------------------------------ */
   const Camera = (() => {
     let stream = null;
-    let currentDataUrl = null; // foto capturada en alta resolución (para mostrar)
-    let currentThumbUrl = null; // miniatura comprimida (para guardar en DB)
+    let originalDataUrl = null; // foto tal cual fue capturada/subida (sin editar)
 
     const els = {};
-
     function init() {
       els.video = document.getElementById('videoPreview');
       els.photo = document.getElementById('photoPreview');
@@ -441,9 +487,7 @@
     async function openCamera() {
       try {
         stopStream();
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' }, audio: false
-        });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
         els.video.srcObject = stream;
         showVideo();
         els.btnSnap.disabled = false;
@@ -451,14 +495,9 @@
         UIUtils.toast('No se pudo acceder a la cámara: ' + err.message, 'err');
       }
     }
-
     function stopStream() {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-        stream = null;
-      }
+      if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     }
-
     function snap() {
       const video = els.video;
       if (!video.videoWidth) return;
@@ -466,11 +505,10 @@
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvas.getContext('2d').drawImage(video, 0, 0);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
       stopStream();
       setPhoto(dataUrl);
     }
-
     function onFileSelected(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -483,78 +521,232 @@
       reader.onerror = () => UIUtils.toast('No se pudo leer el archivo.', 'err');
       reader.readAsDataURL(file);
     }
-
     function setPhoto(dataUrl) {
-      currentDataUrl = dataUrl;
+      originalDataUrl = dataUrl;
       els.photo.src = dataUrl;
       showPhoto();
-      generateThumbnail(dataUrl).then(thumb => {
-        currentThumbUrl = thumb;
-        // Dispara el análisis de IA automáticamente al tener foto lista
-        window.dispatchEvent(new CustomEvent('scanwork:photo-ready', { detail: { dataUrl } }));
-      });
       els.btnReset.style.display = 'inline-flex';
       els.btnSnap.disabled = true;
+      Preprocess.loadImage(dataUrl);
+      AI.resetResults();
     }
-
-    function generateThumbnail(dataUrl) {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          let { width, height } = img;
-          const max = CONFIG.thumbMaxSize;
-          if (width > max || height > max) {
-            const ratio = Math.min(max / width, max / height);
-            width = Math.round(width * ratio);
-            height = Math.round(height * ratio);
-          }
-          const c = document.createElement('canvas');
-          c.width = width; c.height = height;
-          c.getContext('2d').drawImage(img, 0, 0, width, height);
-          resolve(c.toDataURL('image/jpeg', CONFIG.thumbQuality));
-        };
-        img.onerror = () => resolve(dataUrl); // fallback: usa la original si falla
-        img.src = dataUrl;
-      });
-    }
-
     function reset() {
       stopStream();
-      currentDataUrl = null;
-      currentThumbUrl = null;
+      originalDataUrl = null;
       els.photo.src = '';
       els.video.srcObject = null;
       showEmpty();
       els.btnReset.style.display = 'none';
       els.btnSnap.disabled = true;
       els.fileInput.value = '';
+      Preprocess.clear();
       AI.resetResults();
     }
+    function showEmpty() { els.empty.style.display = 'block'; els.video.style.display = 'none'; els.photo.style.display = 'none'; }
+    function showVideo() { els.empty.style.display = 'none'; els.video.style.display = 'block'; els.photo.style.display = 'none'; }
+    function showPhoto() { els.empty.style.display = 'none'; els.video.style.display = 'none'; els.photo.style.display = 'block'; }
 
-    function showEmpty() {
-      els.empty.style.display = 'block';
-      els.video.style.display = 'none';
-      els.photo.style.display = 'none';
-    }
-    function showVideo() {
-      els.empty.style.display = 'none';
-      els.video.style.display = 'block';
-      els.photo.style.display = 'none';
-    }
-    function showPhoto() {
-      els.empty.style.display = 'none';
-      els.video.style.display = 'none';
-      els.photo.style.display = 'block';
-    }
+    function getOriginal() { return originalDataUrl; }
+    function hasPhoto() { return !!originalDataUrl; }
 
-    function getPhoto() { return currentDataUrl; }
-    function getThumbnail() { return currentThumbUrl; }
-
-    return { init, getPhoto, getThumbnail, reset };
+    return { init, getOriginal, hasPhoto, reset, els: () => els };
   })();
 
   /* ------------------------------------------------------------------ */
-  /* 3. MÓDULO AI — clasificación de imagen (MobileNet) + OCR (Tesseract)*/
+  /* 3. MÓDULO PREPROCESS — contraste, brillo, gris, binarización, recorte */
+  /* ------------------------------------------------------------------ */
+  const Preprocess = (() => {
+    let sourceImg = null;   // Image() con la foto original cargada
+    let cropRect = null;    // {x,y,w,h} en coordenadas de imagen real, o null = sin recorte
+    let cropMode = false;
+    let dragStart = null;
+    const state = { contrast: 0, brightness: 0, grayscale: false, binarize: false, threshold: 128 };
+
+    const els = {};
+    function init() {
+      els.panel = document.getElementById('preprocPanel');
+      els.rangeContrast = document.getElementById('rangeContrast');
+      els.valContrast = document.getElementById('valContrast');
+      els.rangeBrightness = document.getElementById('rangeBrightness');
+      els.valBrightness = document.getElementById('valBrightness');
+      els.toggleGray = document.getElementById('toggleGray');
+      els.toggleBin = document.getElementById('toggleBin');
+      els.toggleCrop = document.getElementById('toggleCrop');
+      els.rowThreshold = document.getElementById('rowThreshold');
+      els.rangeThreshold = document.getElementById('rangeThreshold');
+      els.valThreshold = document.getElementById('valThreshold');
+      els.cropHint = document.getElementById('cropHint');
+      els.btnApplyCrop = document.getElementById('btnApplyCrop');
+      els.btnResetPreproc = document.getElementById('btnResetPreproc');
+      els.btnAnalyze = document.getElementById('btnAnalyze');
+      els.photo = document.getElementById('photoPreview');
+
+      els.rangeContrast.addEventListener('input', () => { state.contrast = +els.rangeContrast.value; els.valContrast.textContent = state.contrast; render(); });
+      els.rangeBrightness.addEventListener('input', () => { state.brightness = +els.rangeBrightness.value; els.valBrightness.textContent = state.brightness; render(); });
+      els.rangeThreshold.addEventListener('input', () => { state.threshold = +els.rangeThreshold.value; els.valThreshold.textContent = state.threshold; render(); });
+
+      els.toggleGray.addEventListener('click', () => { state.grayscale = !state.grayscale; els.toggleGray.classList.toggle('active', state.grayscale); render(); });
+      els.toggleBin.addEventListener('click', () => {
+        state.binarize = !state.binarize;
+        els.toggleBin.classList.toggle('active', state.binarize);
+        els.rowThreshold.style.display = state.binarize ? 'flex' : 'none';
+        if (state.binarize) { state.grayscale = true; els.toggleGray.classList.add('active'); }
+        render();
+      });
+      els.toggleCrop.addEventListener('click', () => {
+        cropMode = !cropMode;
+        els.toggleCrop.classList.toggle('active', cropMode);
+        els.cropHint.style.display = cropMode ? 'block' : 'none';
+        els.btnApplyCrop.style.display = cropMode ? 'inline-flex' : 'none';
+      });
+      els.btnApplyCrop.addEventListener('click', applyCrop);
+      els.btnResetPreproc.addEventListener('click', resetAdjustments);
+      els.btnAnalyze.addEventListener('click', () => AI.analyze(getProcessedDataUrl()));
+
+      setupCropDrag();
+    }
+
+    function loadImage(dataUrl) {
+      const img = new Image();
+      img.onload = () => {
+        sourceImg = img;
+        cropRect = null;
+        els.panel.style.display = 'block';
+        render();
+      };
+      img.src = dataUrl;
+    }
+
+    function clear() {
+      sourceImg = null;
+      cropRect = null;
+      cropMode = false;
+      state.contrast = 0; state.brightness = 0; state.grayscale = false; state.binarize = false; state.threshold = 128;
+      els.panel.style.display = 'none';
+      els.toggleGray.classList.remove('active');
+      els.toggleBin.classList.remove('active');
+      els.toggleCrop.classList.remove('active');
+      els.rowThreshold.style.display = 'none';
+      els.cropHint.style.display = 'none';
+      els.btnApplyCrop.style.display = 'none';
+      els.rangeContrast.value = 0; els.valContrast.textContent = '0';
+      els.rangeBrightness.value = 0; els.valBrightness.textContent = '0';
+    }
+
+    function resetAdjustments() {
+      state.contrast = 0; state.brightness = 0; state.grayscale = false; state.binarize = false; state.threshold = 128;
+      els.rangeContrast.value = 0; els.valContrast.textContent = '0';
+      els.rangeBrightness.value = 0; els.valBrightness.textContent = '0';
+      els.toggleGray.classList.remove('active');
+      els.toggleBin.classList.remove('active');
+      els.rowThreshold.style.display = 'none';
+      cropRect = null;
+      render();
+    }
+
+    // Aplica contraste/brillo/gris/binarización sobre un canvas y devuelve su contexto
+    function buildCanvas() {
+      if (!sourceImg) return null;
+      const canvas = document.createElement('canvas');
+      let sx = 0, sy = 0, sw = sourceImg.width, sh = sourceImg.height;
+      if (cropRect) { sx = cropRect.x; sy = cropRect.y; sw = cropRect.w; sh = cropRect.h; }
+      canvas.width = sw; canvas.height = sh;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(sourceImg, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      const imgData = ctx.getImageData(0, 0, sw, sh);
+      const d = imgData.data;
+      const c = (259 * (state.contrast + 255)) / (255 * (259 - state.contrast)); // factor de contraste
+      const b = state.brightness;
+
+      for (let i = 0; i < d.length; i += 4) {
+        let r = d[i], g = d[i + 1], bl = d[i + 2];
+
+        // Brillo y contraste
+        r = c * (r - 128) + 128 + b;
+        g = c * (g - 128) + 128 + b;
+        bl = c * (bl - 128) + 128 + b;
+
+        // Escala de grises (luminancia perceptual)
+        if (state.grayscale || state.binarize) {
+          const gray = 0.299 * r + 0.587 * g + 0.114 * bl;
+          r = g = bl = gray;
+        }
+
+        // Binarización (umbral fijo, ideal para mejorar el OCR en placas/etiquetas)
+        if (state.binarize) {
+          const v = r >= state.threshold ? 255 : 0;
+          r = g = bl = v;
+        }
+
+        d[i] = clamp(r); d[i + 1] = clamp(g); d[i + 2] = clamp(bl);
+      }
+      ctx.putImageData(imgData, 0, 0);
+      return canvas;
+    }
+    function clamp(v) { return Math.max(0, Math.min(255, v)); }
+
+    function render() {
+      const canvas = buildCanvas();
+      if (!canvas) return;
+      els.photo.src = canvas.toDataURL('image/jpeg', 0.92);
+    }
+
+    function getProcessedDataUrl() {
+      const canvas = buildCanvas();
+      return canvas ? canvas.toDataURL('image/jpeg', 0.92) : null;
+    }
+
+    // --- Recorte por arrastre sobre la imagen mostrada ---
+    let selectionBox = null;
+    function setupCropDrag() {
+      const box = document.getElementById('captureBox');
+      box.addEventListener('mousedown', (e) => {
+        if (!cropMode || !sourceImg) return;
+        dragStart = getRelativePos(e, els.photo);
+        selectionBox = document.createElement('div');
+        selectionBox.style.cssText = 'position:absolute; border:2px dashed #4f7cff; background:rgba(79,124,255,.15); pointer-events:none;';
+        box.style.position = 'relative';
+        box.appendChild(selectionBox);
+      });
+      box.addEventListener('mousemove', (e) => {
+        if (!cropMode || !dragStart || !selectionBox) return;
+        const pos = getRelativePos(e, els.photo);
+        const x = Math.min(dragStart.x, pos.x), y = Math.min(dragStart.y, pos.y);
+        const w = Math.abs(pos.x - dragStart.x), h = Math.abs(pos.y - dragStart.y);
+        Object.assign(selectionBox.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+      });
+      window.addEventListener('mouseup', () => { dragStart = null; });
+    }
+    function getRelativePos(e, imgEl) {
+      const rect = imgEl.getBoundingClientRect();
+      const boxRect = document.getElementById('captureBox').getBoundingClientRect();
+      return { x: e.clientX - boxRect.left, y: e.clientY - boxRect.top, imgRect: rect, boxRect };
+    }
+    function applyCrop() {
+      if (!selectionBox || !sourceImg) { UIUtils.toast('Primero arrastra sobre la imagen para seleccionar el área.', 'err'); return; }
+      const sel = selectionBox.getBoundingClientRect();
+      const imgRect = els.photo.getBoundingClientRect();
+      // Convierte coordenadas de pantalla -> coordenadas reales de la imagen original
+      const scaleX = sourceImg.width / imgRect.width;
+      const scaleY = sourceImg.height / imgRect.height;
+      const x = Math.max(0, (sel.left - imgRect.left) * scaleX);
+      const y = Math.max(0, (sel.top - imgRect.top) * scaleY);
+      const w = Math.min(sourceImg.width - x, sel.width * scaleX);
+      const h = Math.min(sourceImg.height - y, sel.height * scaleY);
+      if (w < 10 || h < 10) { UIUtils.toast('Selecciona un área más grande.', 'err'); return; }
+      cropRect = { x, y, w, h };
+      selectionBox.remove();
+      selectionBox = null;
+      render();
+      UIUtils.toast('Recorte aplicado ✅', 'ok');
+    }
+
+    return { init, loadImage, clear, getProcessedDataUrl, resetAdjustments };
+  })();
+
+  /* ------------------------------------------------------------------ */
+  /* 4. MÓDULO AI — clasificación de imagen + OCR                        */
   /* ------------------------------------------------------------------ */
   const AI = (() => {
     let mobilenetModel = null;
@@ -565,24 +757,34 @@
       els.status = document.getElementById('aiStatus');
       els.statusText = document.getElementById('aiStatusText');
       els.result = document.getElementById('aiResult');
-      window.addEventListener('scanwork:photo-ready', (e) => analyze(e.detail.dataUrl));
     }
 
-    // Palabras clave del ImageNet/MobileNet que asociamos a cada tipo de equipo.
-    // MobileNet no tiene una clase exacta "laptop de oficina", así que mapeamos
-    // por coincidencia de palabras dentro de las predicciones devueltas.
+    // Mapeo de clases de ImageNet/MobileNet -> categorías de equipo del negocio.
+    // MobileNet no tiene clases exactas de "servidor" o "impresora de oficina",
+    // por eso se usa coincidencia de palabras clave sobre las top-N predicciones.
     const KEYWORD_MAP = {
       laptop: ['laptop', 'notebook'],
       desktop: ['desktop computer', 'computer', 'mainframe', 'tower'],
       monitor: ['monitor', 'screen', 'television', 'crt screen', 'display'],
-      otro: ['printer', 'modem', 'router', 'keyboard', 'mouse', 'hard disc', 'scanner']
+      impresora: ['printer', 'photocopier', 'scanner', 'fax'],
+      servidor: ['mainframe', 'rack', 'space bar'], // heurística débil: se refuerza con OCR (ver abajo)
+      otro: ['modem', 'router', 'keyboard', 'mouse', 'hard disc']
+    };
+
+    // Palabras que si aparecen en el texto OCR refuerzan fuertemente la categoría "servidor"
+    // o "impresora", compensando la falta de clases específicas en MobileNet.
+    const OCR_CATEGORY_HINTS = {
+      servidor: ['server', 'servidor', 'poweredge', 'proliant', 'rack unit', 'rackmount'],
+      impresora: ['printer', 'impresora', 'laserjet', 'inkjet', 'toner', 'cartridge'],
+      monitor: ['monitor', 'display', 'led', 'lcd', 'hz', 'full hd', 'ips'],
+      laptop: ['notebook', 'laptop', 'thinkpad', 'ideapad', 'inspiron', 'pavilion', 'macbook'],
+      desktop: ['desktop', 'tower', 'optiplex', 'elitedesk']
     };
 
     async function ensureModel() {
       if (mobilenetModel) return mobilenetModel;
       if (modelLoading) return modelLoading;
-      modelLoading = mobilenet.load({ version: 2, alpha: 1.0 })
-        .then(m => { mobilenetModel = m; return m; });
+      modelLoading = mobilenet.load({ version: 2, alpha: 1.0 }).then(m => { mobilenetModel = m; return m; });
       return modelLoading;
     }
 
@@ -592,35 +794,42 @@
     }
 
     function classifyFromMap(predictions) {
-      // Busca la mejor coincidencia de tipo de equipo dentro de las predicciones top-5.
       let best = { tipo: null, score: 0, label: null };
       for (const p of predictions) {
         const className = p.className.toLowerCase();
         for (const [tipo, keywords] of Object.entries(KEYWORD_MAP)) {
-          if (keywords.some(k => className.includes(k))) {
-            if (p.probability > best.score) {
-              best = { tipo, score: p.probability, label: p.className };
-            }
+          if (keywords.some(k => className.includes(k)) && p.probability > best.score) {
+            best = { tipo, score: p.probability, label: p.className };
           }
         }
       }
       return best;
     }
 
+    function refineWithOCR(visionResult, ocrTextLower) {
+      // Si el OCR contiene términos muy específicos de una categoría, se prioriza
+      // sobre la predicción visual (más confiable para "servidor" e "impresora").
+      for (const [tipo, hints] of Object.entries(OCR_CATEGORY_HINTS)) {
+        if (hints.some(h => ocrTextLower.includes(h))) {
+          return { tipo, score: Math.max(visionResult.score || 0, 0.65), label: `texto OCR: "${hints.find(h => ocrTextLower.includes(h))}"`, source: 'ocr' };
+        }
+      }
+      return visionResult;
+    }
+
     async function analyze(dataUrl) {
+      if (!dataUrl) { UIUtils.toast('No hay imagen para analizar.', 'err'); return; }
       resetResults();
       setStatus(true, 'Cargando modelo de visión (primera vez puede tardar)…');
 
-      let visionResult = null;
+      let visionResult = { tipo: null, score: 0, label: null };
       let ocrResult = null;
 
       try {
         const model = await ensureModel();
         setStatus(true, 'Analizando tipo de equipo…');
         const imgEl = new Image();
-        await new Promise((resolve, reject) => {
-          imgEl.onload = resolve; imgEl.onerror = reject; imgEl.src = dataUrl;
-        });
+        await new Promise((resolve, reject) => { imgEl.onload = resolve; imgEl.onerror = reject; imgEl.src = dataUrl; });
         const predictions = await model.classify(imgEl);
         visionResult = classifyFromMap(predictions);
         visionResult.raw = predictions;
@@ -631,18 +840,24 @@
 
       try {
         setStatus(true, 'Extrayendo texto visible (OCR)…');
-        const { data } = await Tesseract.recognize(dataUrl, 'eng', { logger: () => {} });
+        const { data } = await Tesseract.recognize(dataUrl, CONFIG.ocrLang, { logger: () => {} });
         ocrResult = data;
       } catch (err) {
         console.error('Error en OCR:', err);
       }
 
+      // Combina ambas señales: el texto OCR puede corregir/reforzar la categoría visual
+      let finalVision = visionResult;
+      if (ocrResult && ocrResult.text) {
+        finalVision = refineWithOCR(visionResult, ocrResult.text.toLowerCase());
+      }
+
       setStatus(false);
-      applyResults(visionResult, ocrResult);
+      applyResults(finalVision, ocrResult);
     }
 
     function applyResults(visionResult, ocrResult) {
-      const els2 = {
+      const f = {
         tipo: document.getElementById('fTipo'),
         marca: document.getElementById('fMarca'),
         modelo: document.getElementById('fModelo'),
@@ -651,24 +866,25 @@
 
       let html = '';
 
-      // --- Resultado de visión ---
       if (visionResult && visionResult.tipo) {
-        if (!els2.tipo.value) els2.tipo.value = visionResult.tipo;
+        if (!f.tipo.value) f.tipo.value = visionResult.tipo;
+        const pct = Math.round((visionResult.score || 0) * 100);
         html += `<div><b>Tipo detectado:</b> <span class="chip">${visionResult.tipo}</span> ` +
-                `(confianza ${(visionResult.score * 100).toFixed(0)}%, etiqueta IA: "${visionResult.label}")</div>`;
+                `${visionResult.source === 'ocr' ? '(confirmado por texto OCR)' : `(confianza visual ${pct}%, etiqueta IA: "${visionResult.label}")`}</div>` +
+                `<div class="conf-bar"><div style="width:${pct}%"></div></div>`;
       } else {
         html += `<div><b>Tipo detectado:</b> no se identificó con certeza — selecciónalo manualmente.</div>`;
       }
 
-      // --- Resultado de OCR: intenta extraer marca/modelo/serie de las palabras leídas ---
       if (ocrResult && ocrResult.text && ocrResult.text.trim()) {
         const rawText = ocrResult.text.trim();
         const guesses = guessBrandModelSerial(rawText);
-        html += `<div style="margin-top:6px;"><b>Texto OCR detectado:</b><br>` +
-                `<span style="color:var(--muted); font-size:11.5px;">${escapeHtml(rawText).slice(0, 220)}${rawText.length > 220 ? '…' : ''}</span></div>`;
+        html += `<div style="margin-top:8px;"><b>Texto OCR detectado</b> ` +
+                `<span style="color:var(--muted); font-size:11px;">(confianza media: ${Math.round(ocrResult.confidence || 0)}%)</span><br>` +
+                `<span style="color:var(--muted); font-size:11.5px;">${escapeHtml(rawText).slice(0, 240)}${rawText.length > 240 ? '…' : ''}</span></div>`;
 
-        if (guesses.marca && !els2.marca.value) els2.marca.value = guesses.marca;
-        if (guesses.serie && !els2.serie.value) els2.serie.value = guesses.serie;
+        if (guesses.marca && !f.marca.value) f.marca.value = guesses.marca;
+        if (guesses.serie && !f.serie.value) f.serie.value = guesses.serie;
 
         if (guesses.marca || guesses.serie) {
           html += `<div style="margin-top:4px;">`;
@@ -677,20 +893,18 @@
           html += `</div>`;
         }
       } else {
-        html += `<div style="margin-top:6px; color:var(--muted);">No se detectó texto legible en la imagen.</div>`;
+        html += `<div style="margin-top:8px; color:var(--muted);">No se detectó texto legible. Prueba ajustando contraste/binarización y vuelve a analizar.</div>`;
       }
 
-      els2 ? null : null;
       const resultEl = document.getElementById('aiResult');
       resultEl.innerHTML = html;
       resultEl.style.display = 'block';
     }
 
-    // Lista corta de marcas comunes de equipos de cómputo para intentar
-    // identificarlas dentro del texto OCR crudo.
     const KNOWN_BRANDS = ['HP', 'DELL', 'LENOVO', 'ASUS', 'ACER', 'APPLE', 'MACBOOK',
       'SAMSUNG', 'LG', 'TOSHIBA', 'SONY', 'MSI', 'HUAWEI', 'COMPAQ', 'GATEWAY',
-      'AOC', 'BENQ', 'VIEWSONIC', 'PHILIPS', 'INTEL', 'GIGABYTE'];
+      'AOC', 'BENQ', 'VIEWSONIC', 'PHILIPS', 'INTEL', 'GIGABYTE', 'EPSON', 'CANON',
+      'BROTHER', 'XEROX', 'RICOH', 'KYOCERA', 'IBM', 'CISCO'];
 
     function guessBrandModelSerial(text) {
       const upper = text.toUpperCase();
@@ -698,43 +912,32 @@
       for (const b of KNOWN_BRANDS) {
         if (upper.includes(b)) { marca = b.charAt(0) + b.slice(1).toLowerCase(); break; }
       }
-      // Heurística simple de serie: token alfanumérico largo (>=6) con mezcla de letras y números
       const tokens = text.split(/\s+/);
       let serie = null;
       for (const t of tokens) {
         const clean = t.replace(/[^A-Za-z0-9]/g, '');
-        if (clean.length >= 6 && /[A-Za-z]/.test(clean) && /[0-9]/.test(clean)) {
-          serie = clean; break;
-        }
+        if (clean.length >= 6 && /[A-Za-z]/.test(clean) && /[0-9]/.test(clean)) { serie = clean; break; }
       }
       return { marca, serie };
     }
-
     function escapeHtml(str) {
-      const d = document.createElement('div');
-      d.textContent = str;
-      return d.innerHTML;
+      const d = document.createElement('div'); d.textContent = str; return d.innerHTML;
     }
-
     function resetResults() {
       els.result.style.display = 'none';
       els.result.innerHTML = '';
       setStatus(false);
     }
 
-    return { init, resetResults };
+    return { init, analyze, resetResults };
   })();
 
   /* ------------------------------------------------------------------ */
-  /* 4. MÓDULO FORM — lectura/escritura del formulario de ingreso        */
+  /* 5. MÓDULO FORM                                                       */
   /* ------------------------------------------------------------------ */
   const Form = (() => {
     const ids = ['fCliente', 'fTipo', 'fMarca', 'fModelo', 'fSerie', 'fObs'];
-    function getEls() {
-      const o = {};
-      ids.forEach(id => o[id] = document.getElementById(id));
-      return o;
-    }
+    function getEls() { const o = {}; ids.forEach(id => o[id] = document.getElementById(id)); return o; }
 
     function readData() {
       const e = getEls();
@@ -747,25 +950,22 @@
         observaciones: e.fObs.value.trim()
       };
     }
-
     function validate(data) {
       const errors = [];
       if (!data.cliente) errors.push('El nombre del cliente es obligatorio.');
-      if (!Camera.getPhoto()) errors.push('Debes capturar o subir una foto del equipo.');
+      if (!Camera.hasPhoto()) errors.push('Debes capturar o subir una foto del equipo.');
       return errors;
     }
-
     function clear() {
       const e = getEls();
       ids.forEach(id => e[id].value = '');
       Camera.reset();
     }
-
     return { readData, validate, clear };
   })();
 
   /* ------------------------------------------------------------------ */
-  /* 5. MÓDULO HISTORY — render, búsqueda y filtrado                     */
+  /* 6. MÓDULO HISTORY                                                    */
   /* ------------------------------------------------------------------ */
   const History = (() => {
     let cache = [];
@@ -783,7 +983,7 @@
 
     function renderStats() {
       const total = cache.length;
-      const counts = { laptop: 0, desktop: 0, monitor: 0, otro: 0 };
+      const counts = {}; CONFIG.TIPOS.forEach(t => counts[t] = 0);
       cache.forEach(r => { counts[r.tipo] = (counts[r.tipo] || 0) + 1; });
       const hoy = new Date().toISOString().slice(0, 10);
       const ingresosHoy = cache.filter(r => (r.fecha || '').slice(0, 10) === hoy).length;
@@ -792,7 +992,8 @@
         <div class="stat"><div class="num">${total}</div><div class="lbl">Total de ingresos</div></div>
         <div class="stat"><div class="num">${ingresosHoy}</div><div class="lbl">Ingresos hoy</div></div>
         <div class="stat"><div class="num">${counts.laptop}</div><div class="lbl">Laptops</div></div>
-        <div class="stat"><div class="num">${counts.desktop + counts.monitor}</div><div class="lbl">Desktops / Monitores</div></div>
+        <div class="stat"><div class="num">${counts.desktop}</div><div class="lbl">Desktops</div></div>
+        <div class="stat"><div class="num">${counts.servidor + counts.impresora}</div><div class="lbl">Servidores / Impresoras</div></div>
       `;
       document.getElementById('totalBadge').textContent = total;
     }
@@ -817,11 +1018,7 @@
     function render(list) {
       const tbody = document.getElementById('tablaHistorial');
       const empty = document.getElementById('emptyState');
-      if (!list.length) {
-        tbody.innerHTML = '';
-        empty.style.display = 'block';
-        return;
-      }
+      if (!list.length) { tbody.innerHTML = ''; empty.style.display = 'block'; return; }
       empty.style.display = 'none';
 
       tbody.innerHTML = list.map(r => `
@@ -842,16 +1039,10 @@
     }
 
     function formatFecha(iso) {
-      try {
-        const d = new Date(iso);
-        return d.toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' });
-      } catch { return iso; }
+      try { return new Date(iso).toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' }); }
+      catch { return iso; }
     }
-    function escapeHtml(str) {
-      const d = document.createElement('div');
-      d.textContent = str == null ? '' : str;
-      return d.innerHTML;
-    }
+    function escapeHtml(str) { const d = document.createElement('div'); d.textContent = str == null ? '' : str; return d.innerHTML; }
 
     function getById(id) { return cache.find(r => r.id === id); }
     function getAllCached() { return cache; }
@@ -860,7 +1051,7 @@
   })();
 
   /* ------------------------------------------------------------------ */
-  /* 6. MÓDULO PDF — generación del ticket con jsPDF                     */
+  /* 7. MÓDULO PDF                                                        */
   /* ------------------------------------------------------------------ */
   const PDF = (() => {
     function generar(registro) {
@@ -869,16 +1060,13 @@
       const marginX = 12;
       let y = 16;
 
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(16);
-      doc.text('ScanWork · Ticket de Ingreso', marginX, y);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
+      doc.text('ScanWork Pro · Ticket de Ingreso', marginX, y);
       y += 6;
-      doc.setDrawColor(200);
-      doc.line(marginX, y, 148 - marginX, y);
+      doc.setDrawColor(200); doc.line(marginX, y, 148 - marginX, y);
       y += 8;
 
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10); doc.setFont('helvetica', 'normal');
       const fecha = new Date(registro.fecha).toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' });
 
       const campos = [
@@ -890,19 +1078,14 @@
         ['Modelo', registro.modelo || '—'],
         ['N° de serie', registro.serie || '—'],
       ];
-
       campos.forEach(([label, value]) => {
-        doc.setFont('helvetica', 'bold');
-        doc.text(label + ':', marginX, y);
-        doc.setFont('helvetica', 'normal');
-        doc.text(String(value), marginX + 38, y);
+        doc.setFont('helvetica', 'bold'); doc.text(label + ':', marginX, y);
+        doc.setFont('helvetica', 'normal'); doc.text(String(value), marginX + 38, y);
         y += 6;
       });
 
       y += 2;
-      doc.setFont('helvetica', 'bold');
-      doc.text('Observaciones:', marginX, y);
-      y += 5;
+      doc.setFont('helvetica', 'bold'); doc.text('Observaciones:', marginX, y); y += 5;
       doc.setFont('helvetica', 'normal');
       const obsLines = doc.splitTextToSize(registro.observaciones || 'Sin observaciones.', 148 - marginX * 2);
       doc.text(obsLines, marginX, y);
@@ -910,27 +1093,20 @@
 
       if (registro.thumbnail) {
         try {
-          const imgW = 60;
-          const imgH = 45;
-          doc.addImage(registro.thumbnail, 'JPEG', marginX, y, imgW, imgH);
-          y += imgH + 6;
-        } catch (err) {
-          console.warn('No se pudo insertar la imagen en el PDF:', err);
-        }
+          doc.addImage(registro.thumbnail, 'JPEG', marginX, y, 60, 45);
+          y += 51;
+        } catch (err) { console.warn('No se pudo insertar la imagen en el PDF:', err); }
       }
 
-      doc.setFontSize(8);
-      doc.setTextColor(140);
-      doc.text('Conserve este ticket para el retiro de su equipo. Generado por ScanWork.', marginX, 200 - 10);
-
+      doc.setFontSize(8); doc.setTextColor(140);
+      doc.text('Conserve este ticket para el retiro de su equipo. Generado por ScanWork Pro.', marginX, 200 - 10);
       doc.save(`ScanWork_Ticket_${String(registro.id).padStart(6, '0')}.pdf`);
     }
-
     return { generar };
   })();
 
   /* ------------------------------------------------------------------ */
-  /* 7. MÓDULO UI UTILS — toasts, tabs, modal                            */
+  /* 8. MÓDULO UI UTILS                                                   */
   /* ------------------------------------------------------------------ */
   const UIUtils = (() => {
     function toast(msg, type = 'ok') {
@@ -941,7 +1117,6 @@
       container.appendChild(el);
       setTimeout(() => el.remove(), 4200);
     }
-
     function initTabs() {
       const buttons = document.querySelectorAll('nav.tabs button');
       buttons.forEach(btn => {
@@ -954,37 +1129,53 @@
         });
       });
     }
-
     function showModal(html) {
       document.getElementById('modalContent').innerHTML = html;
       document.getElementById('modalDetalle').classList.add('show');
     }
-    function hideModal() {
-      document.getElementById('modalDetalle').classList.remove('show');
-    }
-
+    function hideModal() { document.getElementById('modalDetalle').classList.remove('show'); }
     function init() {
       initTabs();
       document.getElementById('modalDetalle').addEventListener('click', (e) => {
         if (e.target.id === 'modalDetalle') hideModal();
       });
     }
-
     return { toast, init, showModal, hideModal };
   })();
 
   /* ------------------------------------------------------------------ */
-  /* 8. APP — orquestación y listeners principales                       */
+  /* 9. APP — orquestación                                                */
   /* ------------------------------------------------------------------ */
   const App = (() => {
+    // Genera la miniatura comprimida a partir de la imagen (procesada o no)
+    function generateThumbnail(dataUrl) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          const max = CONFIG.thumbMaxSize;
+          if (width > max || height > max) {
+            const ratio = Math.min(max / width, max / height);
+            width = Math.round(width * ratio); height = Math.round(height * ratio);
+          }
+          const c = document.createElement('canvas');
+          c.width = width; c.height = height;
+          c.getContext('2d').drawImage(img, 0, 0, width, height);
+          resolve(c.toDataURL('image/jpeg', CONFIG.thumbQuality));
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      });
+    }
 
     async function guardarIngreso({ generarPDF }) {
       const data = Form.readData();
       const errors = Form.validate(data);
-      if (errors.length) {
-        errors.forEach(e => UIUtils.toast(e, 'err'));
-        return;
-      }
+      if (errors.length) { errors.forEach(e => UIUtils.toast(e, 'err')); return; }
+
+      // Usa la imagen procesada (con ajustes/recorte) si existe; si no, la original.
+      const fotoFuente = Preprocess.getProcessedDataUrl() || Camera.getOriginal();
+      const thumbnail = await generateThumbnail(fotoFuente);
 
       const registro = {
         fecha: new Date().toISOString(),
@@ -994,7 +1185,7 @@
         modelo: data.modelo,
         serie: data.serie,
         observaciones: data.observaciones,
-        thumbnail: Camera.getThumbnail() || Camera.getPhoto()
+        thumbnail
       };
 
       try {
@@ -1003,10 +1194,7 @@
         UIUtils.toast('Ingreso guardado correctamente ✅', 'ok');
         Form.clear();
         await History.refresh();
-
-        if (generarPDF) {
-          PDF.generar(registro);
-        }
+        if (generarPDF) PDF.generar(registro);
       } catch (err) {
         console.error(err);
         UIUtils.toast('Error al guardar el ingreso: ' + err.message, 'err');
@@ -1032,13 +1220,11 @@
         </div>
       `);
     }
-
     async function regenerarPDF(id) {
       const r = History.getById(id) || await DB.getById(id);
       if (!r) { UIUtils.toast('Registro no encontrado.', 'err'); return; }
       PDF.generar(r);
     }
-
     async function eliminarRegistro(id) {
       if (!confirm('¿Eliminar este registro de forma permanente?')) return;
       try {
@@ -1046,23 +1232,17 @@
         UIUtils.toast('Registro eliminado.', 'ok');
         UIUtils.hideModal();
         await History.refresh();
-      } catch (err) {
-        UIUtils.toast('Error al eliminar: ' + err.message, 'err');
-      }
+      } catch (err) { UIUtils.toast('Error al eliminar: ' + err.message, 'err'); }
     }
-
     async function exportarTodo() {
       const data = History.getAllCached().length ? History.getAllCached() : await DB.getAll();
       if (!data.length) { UIUtils.toast('No hay registros para exportar.', 'err'); return; }
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `ScanWork_backup_${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      a.href = url; a.download = `ScanWorkPro_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click(); URL.revokeObjectURL(url);
     }
-
     function cerrarModal() { UIUtils.hideModal(); }
 
     function bindEvents() {
@@ -1077,33 +1257,24 @@
 
     async function init() {
       Camera.init();
+      Preprocess.init();
       AI.init();
       UIUtils.init();
       bindEvents();
 
-      // Verifica soporte del navegador para funciones críticas
-      if (!('indexedDB' in window)) {
-        UIUtils.toast('Tu navegador no soporta IndexedDB: los datos no se podrán guardar.', 'err');
-      }
+      if (!('indexedDB' in window)) UIUtils.toast('Tu navegador no soporta IndexedDB: los datos no se podrán guardar.', 'err');
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         document.getElementById('btnOpenCamera').disabled = true;
         document.getElementById('btnOpenCamera').title = 'Cámara no disponible en este navegador/dispositivo';
       }
-
-      try {
-        await DB.open();
-      } catch (err) {
-        UIUtils.toast(err.message, 'err');
-      }
+      try { await DB.open(); } catch (err) { UIUtils.toast(err.message, 'err'); }
       await History.refresh();
     }
 
     return { init, verDetalle, regenerarPDF, eliminarRegistro, cerrarModal };
   })();
 
-  // Exponer funciones usadas por atributos onclick en el HTML generado dinámicamente
   window.ScanWorkApp = App;
-
   document.addEventListener('DOMContentLoaded', App.init);
 })();
 </script>
